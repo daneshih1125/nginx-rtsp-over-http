@@ -221,6 +221,14 @@ static ngx_command_t  ngx_http_core_commands[] = {
       offsetof(ngx_http_core_srv_conf_t, connection_pool_size),
       &ngx_http_core_pool_size_p },
 
+    { ngx_string("rtsp_port"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_size_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_core_srv_conf_t, rtsp_port),
+      NULL },
+
+
     { ngx_string("request_pool_size"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
       ngx_conf_set_size_slot,
@@ -717,6 +725,7 @@ static ngx_command_t  ngx_http_core_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_core_loc_conf_t, resolver_timeout),
       NULL },
+
 
 #if (NGX_HTTP_GZIP)
 
@@ -3255,6 +3264,7 @@ ngx_http_core_create_srv_conf(ngx_conf_t *cf)
     cscf->ignore_invalid_headers = NGX_CONF_UNSET;
     cscf->merge_slashes = NGX_CONF_UNSET;
     cscf->underscores_in_headers = NGX_CONF_UNSET;
+    cscf->rtsp_port = NGX_CONF_UNSET_UINT;
 
     return cscf;
 }
@@ -3434,6 +3444,7 @@ ngx_http_core_create_loc_conf(ngx_conf_t *cf)
     clcf->disable_symlinks = NGX_CONF_UNSET_UINT;
     clcf->disable_symlinks_from = NGX_CONF_UNSET_PTR;
 #endif
+
 
     return clcf;
 }

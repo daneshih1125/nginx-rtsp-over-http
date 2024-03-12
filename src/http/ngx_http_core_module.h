@@ -202,6 +202,7 @@ typedef struct {
 #if (NGX_PCRE)
     unsigned                    captures:1;
 #endif
+    ngx_uint_t                  rtsp_port;
 
     ngx_http_core_loc_conf_t  **named_locations;
 } ngx_http_core_srv_conf_t;

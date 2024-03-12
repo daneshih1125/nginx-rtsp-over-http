@@ -9,7 +9,6 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-
 static void ngx_http_wait_request_handler(ngx_event_t *ev);
 static void ngx_http_process_request_line(ngx_event_t *rev);
 static void ngx_http_process_request_headers(ngx_event_t *rev);
@@ -380,6 +379,98 @@ ngx_http_init_connection(ngx_connection_t *c)
     }
 }
 
+static void
+ngx_http_rtsp_post_handler(ngx_event_t *rev)
+{
+    size_t                     size;
+    ssize_t                    n;
+    ngx_connection_t           *c;
+    ngx_buf_t                  *b;
+    ngx_http_connection_t      *hc;
+    ngx_http_core_srv_conf_t   *cscf;
+    struct sockaddr_in         servaddr;
+
+    c = rev->data;
+    hc = c->data;
+
+    if (c->close) {
+        ngx_http_close_connection(c);
+        return;
+    }
+
+    cscf = ngx_http_get_module_srv_conf(hc->conf_ctx, ngx_http_core_module);
+
+    size = cscf->client_header_buffer_size;
+
+    b = c->buffer;
+
+    if (b == NULL) {
+        b = ngx_create_temp_buf(c->pool, size);
+        if (b == NULL) {
+            ngx_http_close_connection(c);
+            return;
+        }
+
+        c->buffer = b;
+
+    } else if (b->start == NULL) {
+
+        b->start = ngx_palloc(c->pool, size);
+        if (b->start == NULL) {
+            ngx_http_close_connection(c);
+            return;
+        }
+
+        b->pos = b->start;
+        b->last = b->start;
+        b->end = b->last + size;
+    }
+
+    // first connect
+    if (c->rtspfd == 0) {
+        c->rtspfd = socket(AF_INET, SOCK_STREAM, 0);
+        bzero(&servaddr, sizeof(servaddr));
+        servaddr.sin_family = AF_INET;
+        servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        if (cscf->rtsp_port == NGX_CONF_UNSET_UINT) {
+            servaddr.sin_port = htons(554);
+        } else {
+            servaddr.sin_port = htons(cscf->rtsp_port);
+        }
+
+        connect(c->rtspfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
+        if (send(c->rtspfd, b->start, (b->last - b->start), 0) == -1) {
+            ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
+                           "RTSP post channel send first command fail\n");
+            ngx_http_close_connection(c);
+        }
+
+        ngx_add_timer(rev, c->listening->post_accept_timeout);
+        ngx_reusable_connection(c, 1);
+        if (ngx_pfree(c->pool, b->start) == NGX_OK) {
+            b->start = NULL;
+        }
+        return;
+    }
+
+    n = c->recv(c, b->last, size);
+
+    if (n > 0 && send(c->rtspfd, b->start, n, 0) == -1) {
+        ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
+                       "RTSP post channel send command fail\n");
+        ngx_http_close_connection(c);
+    }
+
+    ngx_add_timer(rev, c->listening->post_accept_timeout);
+    ngx_reusable_connection(c, 1);
+
+    if (ngx_pfree(c->pool, b->start) == NGX_OK) {
+        b->start = NULL;
+    }
+
+    return;
+}
+
 
 static void
 ngx_http_wait_request_handler(ngx_event_t *rev)
@@ -391,6 +482,9 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
     ngx_connection_t          *c;
     ngx_http_connection_t     *hc;
     ngx_http_core_srv_conf_t  *cscf;
+
+    u_char *http_header_end;
+    char   http_header[1024];
 
     c = rev->data;
 
@@ -437,6 +531,36 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
     }
 
     n = c->recv(c, b->last, size);
+
+    http_header_end = ngx_strnstr(b->start, "\r\n\r\n", n);
+    if (http_header_end != NULL) {
+        ngx_memset(http_header, '\0', sizeof(http_header));
+        ngx_memcpy(http_header, b->start, (http_header_end - b->start));
+        if ((ngx_strstr(http_header, "x-sessioncookie:") != NULL) &&
+            (ngx_strncmp(http_header, "POST", 4) == 0))
+        {
+            /*
+             * RTSP GET channel handle by proxy_pass
+             *
+             * location ~ "^/stream[1-3]" {
+             *     gzip off;
+             *     chunked_transfer_encoding off;
+             *     keepalive_timeout  120s 120s;
+             *     proxy_read_timeout     300;
+             *     proxy_connect_timeout  300;
+             *     proxy_http_version 1.1;
+             *     proxy_buffering    off;
+             *     proxy_set_header Connection "";
+             *     proxy_pass http://127.0.0.1:${rtsp_port};
+             * }
+             *
+             */
+            rev->handler = ngx_http_rtsp_post_handler;
+            b->last += n;
+            ngx_http_rtsp_post_handler(rev);
+            return;
+        }
+    }
 
     if (n == NGX_AGAIN) {
 

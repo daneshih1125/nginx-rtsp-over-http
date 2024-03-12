@@ -124,6 +124,7 @@ struct ngx_connection_s {
     ngx_event_t        *write;
 
     ngx_socket_t        fd;
+    ngx_socket_t        rtspfd;
 
     ngx_recv_pt         recv;
     ngx_send_pt         send;
